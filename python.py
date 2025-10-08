@@ -54,7 +54,7 @@ def get_ai_analysis(data_for_ai, api_key):
         client = genai.Client(api_key=api_key)
         model_name = 'gemini-2.5-flash' 
         prompt = f"""
-        Bạn là một chuyên gia phân tích tài chính chuyên nghiệp. Dựa trên các chỉ số tài chính sau, hãy đưa ra một nhận xét khách quan, ngắn gọn (khoảng 3-4 đoạn) về tình hình tài chính của doanh nghiệp. Đánh giá tập trung vào tốc độ tăng trưởng, thay đổi cơ cấu tài sản và khả năng thanh toán hiện hành.
+        Bạn là một chuyên gia phân tích tài chính chuyên nghiệp. Dựa trên các chỉ số tài chính sau, hãy đưa ra một nhận xét khách quan, ngắn gọn (khoảng 3-4 đoạn) về tình hình tài chính của doanh nghiệp. Đánh giá tập trung vào tốc độ tăng trưởng, thay đổi cơ cấu tài sản, khả năng thanh toán (hiện hành và nhanh), hiệu quả hoạt động (lợi nhuận ròng) và đòn bẩy tài chính (nợ trên vốn chủ sở hữu).
         
         Dữ liệu thô và chỉ số:
         {data_for_ai}
@@ -135,58 +135,149 @@ if uploaded_file is not None:
             # --- Chức năng 4: Tính Chỉ số Tài chính ---
             st.subheader("4. Các Chỉ số Tài chính Cơ bản")
             
+            # Khởi tạo dict để lưu trữ các chỉ số. Dùng dict để dễ dàng đưa vào AI.
+            ratios = {}
+            
             try:
-                # Lọc giá trị cho Chỉ số Thanh toán Hiện hành (Ví dụ)
+                # ------------------ KHAI THÁC DỮ LIỆU TỪ DATAFRAME ------------------
                 
-                # Lấy Tài sản ngắn hạn
-                tsnh_n = df_processed[df_processed['Chỉ tiêu'].str.contains('TÀI SẢN NGẮN HẠN', case=False, na=False)]['Năm sau'].iloc[0]
-                tsnh_n_1 = df_processed[df_processed['Chỉ tiêu'].str.contains('TÀI SẢN NGẮN HẠN', case=False, na=False)]['Năm trước'].iloc[0]
-                # Lấy Nợ ngắn hạn (Dùng giá trị giả định hoặc lọc từ file nếu có)
-                # **LƯU Ý: Thay thế logic sau nếu bạn có Nợ Ngắn Hạn trong file**
-                no_ngan_han_N = df_processed[df_processed['Chỉ tiêu'].str.contains('NỢ NGẮN HẠN', case=False, na=False)]['Năm sau'].iloc[0]  
-                no_ngan_han_N_1 = df_processed[df_processed['Chỉ tiêu'].str.contains('NỢ NGẮN HẠN', case=False, na=False)]['Năm trước'].iloc[0]
-                # Tính toán
-                thanh_toan_hien_hanh_N = tsnh_n / no_ngan_han_N
-                thanh_toan_hien_hanh_N_1 = tsnh_n_1 / no_ngan_han_N_1
+                def get_val(keyword, year_col):
+                    """Hàm helper để lấy giá trị cho MẪU SỐ, trả về 1e-9 (thay cho 0) nếu không tìm thấy, giúp tránh lỗi chia cho 0."""
+                    try:
+                        # Lấy giá trị sau khi lọc
+                        val = df_processed[df_processed['Chỉ tiêu'].str.contains(keyword, case=False, na=False)][year_col].iloc[0]
+                        # Trả về 1e-9 nếu giá trị xấp xỉ 0 để tránh lỗi chia
+                        return val if val != 0 else 1e-9 
+                    except IndexError:
+                        # Nếu không tìm thấy, trả về 1e-9 để tránh lỗi chia
+                        return 1e-9 
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric(
-                        label="Chỉ số Thanh toán Hiện hành (Năm trước)",
-                        value=f"{thanh_toan_hien_hanh_N_1:.2f} lần"
-                    )
-                with col2:
-                    st.metric(
-                        label="Chỉ số Thanh toán Hiện hành (Năm sau)",
-                        value=f"{thanh_toan_hien_hanh_N:.2f} lần",
-                        delta=f"{thanh_toan_hien_hanh_N - thanh_toan_hien_hanh_N_1:.2f}"
-                    )
-                    
-            except IndexError:
-                 st.warning("Thiếu chỉ tiêu 'TÀI SẢN NGẮN HẠN' hoặc 'NỢ NGẮN HẠN' để tính chỉ số.")
-                 thanh_toan_hien_hanh_N = "N/A" # Dùng để tránh lỗi ở Chức năng 5
-                 thanh_toan_hien_hanh_N_1 = "N/A"
+                def get_numerator_val(keyword, year_col):
+                    """Hàm helper để lấy giá trị cho TỬ SỐ, trả về 0 nếu không tìm thấy (cho phép LNTT âm/bằng 0)."""
+                    try:
+                        return df_processed[df_processed['Chỉ tiêu'].str.contains(keyword, case=False, na=False)][year_col].iloc[0]
+                    except IndexError:
+                        return 0.0
+
+                # Lấy các chỉ tiêu cốt lõi
+                # Khả năng Thanh toán
+                tsnh_n = get_numerator_val('TÀI SẢN NGẮN HẠN', 'Năm sau')
+                tsnh_n_1 = get_numerator_val('TÀI SẢN NGẮN HẠN', 'Năm trước')
+                htk_n = get_numerator_val('HÀNG TỒN KHO', 'Năm sau') # Hàng tồn kho
+                htk_n_1 = get_numerator_val('HÀNG TỒN KHO', 'Năm trước')
+                no_ngan_han_N = get_val('NỢ NGẮN HẠN', 'Năm sau')  # Mẫu số
+                no_ngan_han_N_1 = get_val('NỢ NGẮN HẠN', 'Năm trước') # Mẫu số
+                
+                # Đòn bẩy
+                tong_no_n = get_numerator_val('TỔNG CỘNG NỢ PHẢI TRẢ', 'Năm sau') # Tổng Nợ
+                tong_no_n_1 = get_numerator_val('TỔNG CỘNG NỢ PHẢI TRẢ', 'Năm trước')
+                vcsh_n = get_val('VỐN CHỦ SỞ HỮU', 'Năm sau') # Vốn Chủ Sở Hữu (Mẫu số)
+                vcsh_n_1 = get_val('VỐN CHỦ SỞ HỮU', 'Năm trước') # Vốn Chủ Sở Hữu (Mẫu số)
+                
+                # Hiệu quả hoạt động
+                lnst_n = get_numerator_val('LỢI NHUẬN SAU THUẾ', 'Năm sau') # Lợi nhuận sau thuế (Tử số)
+                lnst_n_1 = get_numerator_val('LỢI NHUẬN SAU THUẾ', 'Năm trước') # Lợi nhuận sau thuế (Tử số)
+                dt_n = get_val('DOANH THU THUẦN', 'Năm sau') # Doanh thu thuần (Mẫu số)
+                dt_n_1 = get_val('DOANH THU THUẦN', 'Năm trước') # Doanh thu thuần (Mẫu số)
+                
+                # ------------------ TÍNH TOÁN CÁC CHỈ SỐ ------------------
+
+                # 1. Chỉ số Thanh toán Hiện hành (Current Ratio)
+                ratios['Thanh_toan_HH_N'] = tsnh_n / no_ngan_han_N
+                ratios['Thanh_toan_HH_N_1'] = tsnh_n_1 / no_ngan_han_N_1
+                
+                # 2. Chỉ số Thanh toán Nhanh (Quick Ratio)
+                ratios['Thanh_toan_Nhanh_N'] = (tsnh_n - htk_n) / no_ngan_han_N
+                ratios['Thanh_toan_Nhanh_N_1'] = (tsnh_n_1 - htk_n_1) / no_ngan_han_N_1
+                
+                # 3. Tỷ suất Lợi nhuận Ròng (Net Profit Margin) - Tính bằng %
+                ratios['Loi_nhuan_Rong_N'] = (lnst_n / dt_n) * 100 
+                ratios['Loi_nhuan_Rong_N_1'] = (lnst_n_1 / dt_n_1) * 100
+
+                # 4. Tỷ suất Nợ trên Vốn Chủ Sở Hữu (D/E Ratio)
+                ratios['No_tren_VCSH_N'] = tong_no_n / vcsh_n
+                ratios['No_tren_VCSH_N_1'] = tong_no_n_1 / vcsh_n_1
+
+                # ------------------ HIỂN THỊ KẾT QUẢ TRÊN STREAMLIT ------------------
+                
+                def display_ratio(label, ratio_n_1, ratio_n, is_percentage=False):
+                    """Hàm helper hiển thị 1 chỉ số và so sánh giữa 2 năm."""
+                    # Định dạng chuỗi giá trị và delta
+                    try:
+                        val_n_1 = f"{ratio_n_1:.2f}{'%' if is_percentage else ' lần'}"
+                        val_n = f"{ratio_n:.2f}{'%' if is_percentage else ' lần'}"
+                        delta = f"{ratio_n - ratio_n_1:.2f}"
+                    except:
+                        val_n_1 = "Lỗi tính toán"
+                        val_n = "Lỗi tính toán"
+                        delta = "N/A"
+
+                    col_prev, col_current = st.columns(2)
+                    with col_prev:
+                        st.metric(
+                            label=f"{label} (Năm trước)",
+                            value=val_n_1
+                        )
+                    with col_current:
+                        st.metric(
+                            label=f"{label} (Năm sau)",
+                            value=val_n,
+                            delta=delta
+                        )
+                
+                st.markdown("#### **Khả năng Thanh toán**")
+                display_ratio("Chỉ số Thanh toán Hiện hành", ratios['Thanh_toan_HH_N_1'], ratios['Thanh_toan_HH_N'])
+                display_ratio("Chỉ số Thanh toán Nhanh (Acid-test)", ratios['Thanh_toan_Nhanh_N_1'], ratios['Thanh_toan_Nhanh_N'])
+                
+                st.markdown("#### **Hiệu quả hoạt động & Đòn bẩy**")
+                display_ratio("Tỷ suất Lợi nhuận Ròng", ratios['Loi_nhuan_Rong_N_1'], ratios['Loi_nhuan_Rong_N'], is_percentage=True)
+                display_ratio("Tỷ suất Nợ trên Vốn Chủ Sở Hữu", ratios['No_tren_VCSH_N_1'], ratios['No_tren_VCSH_N'])
+
+            except Exception as e:
+                 # Cảnh báo nếu thiếu bất kỳ chỉ tiêu cốt lõi nào
+                 st.warning(f"Thiếu chỉ tiêu cần thiết để tính đầy đủ các chỉ số tài chính (Có thể thiếu: TÀI SẢN NGẮN HẠN, HÀNG TỒN KHO, LỢI NHUẬN SAU THUẾ, DOANH THU THUẦN, TỔNG CỘNG NỢ PHẢI TRẢ, VỐN CHỦ SỞ HỮU). Chi tiết lỗi: {e}")
+                 # Đảm bảo dict ratios tồn tại và chứa tất cả keys để tránh lỗi ở Chức năng 5
+                 ratios = {k: "N/A" for k in [
+                     'Thanh_toan_HH_N', 'Thanh_toan_HH_N_1', 
+                     'Thanh_toan_Nhanh_N', 'Thanh_toan_Nhanh_N_1', 
+                     'Loi_nhuan_Rong_N', 'Loi_nhuan_Rong_N_1', 
+                     'No_tren_VCSH_N', 'No_tren_VCSH_N_1'
+                 ]}
             
             # --------------------------------------------------------------------------------------
             # --- Chức năng 5: Nhận xét AI ---
             # --------------------------------------------------------------------------------------
             st.subheader("5. Nhận xét Tình hình Tài chính (AI)")
             
-            # Chuẩn bị dữ liệu để gửi cho AI
+            # Chuẩn bị dữ liệu để gửi cho AI (Sử dụng dict ratios)
             data_for_ai = pd.DataFrame({
                 'Chỉ tiêu': [
                     'Toàn bộ Bảng phân tích (dữ liệu thô)', 
                     'Tăng trưởng Tài sản ngắn hạn (%)', 
-                    'Thanh toán hiện hành (N-1)', 
-                    'Thanh toán hiện hành (N)'
+                    'Thanh toán Hiện hành (N-1)', 
+                    'Thanh toán Hiện hành (N)',
+                    'Thanh toán Nhanh (N-1)',
+                    'Thanh toán Nhanh (N)',
+                    'Tỷ suất LN Ròng (N-1)',
+                    'Tỷ suất LN Ròng (N)',
+                    'Nợ trên VCSH (N-1)',
+                    'Nợ trên VCSH (N)',
                 ],
                 'Giá trị': [
                     df_processed.to_markdown(index=False),
-                    f"{df_processed[df_processed['Chỉ tiêu'].str.contains('TÀI SẢN NGẮN HẠN', case=False, na=False)]['Tốc độ tăng trưởng (%)'].iloc[0]:.2f}%", 
-                    f"{thanh_toan_hien_hanh_N_1}", 
-                    f"{thanh_toan_hien_hanh_N}"
+                    # Tăng trưởng tài sản ngắn hạn
+                    f"{df_processed[df_processed['Chỉ tiêu'].str.contains('TÀI SẢN NGẮN HẠN', case=False, na=False)]['Tốc độ tăng trưởng (%)'].iloc[0]:.2f}%" if 'TÀI SẢN NGẮN HẠN' in df_processed['Chỉ tiêu'].str.upper().to_list() else "N/A", 
+                    f"{ratios['Thanh_toan_HH_N_1']}", 
+                    f"{ratios['Thanh_toan_HH_N']}",
+                    f"{ratios['Thanh_toan_Nhanh_N_1']}",
+                    f"{ratios['Thanh_toan_Nhanh_N']}",
+                    f"{ratios['Loi_nhuan_Rong_N_1']}",
+                    f"{ratios['Loi_nhuan_Rong_N']}",
+                    f"{ratios['No_tren_VCSH_N_1']}",
+                    f"{ratios['No_tren_VCSH_N']}",
                 ]
             }).to_markdown(index=False) 
+            
             if st.button("Yêu cầu AI Phân tích"):
                 api_key = st.secrets.get("GEMINI_API_KEY") 
                 
