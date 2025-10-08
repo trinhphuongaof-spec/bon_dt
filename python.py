@@ -1,4 +1,3 @@
-# python.py
 import streamlit as st
 import pandas as pd
 from google import genai
@@ -9,7 +8,9 @@ st.set_page_config(
     page_title="App Phân Tích Báo Cáo Tài Chính",
     layout="wide"
 )
-st.title("Ứng dụng Phân Tích Báo Cáo Tài chính 📊")
+
+# Thay thế st.title bằng st.markdown để tùy chỉnh màu sắc và chữ in hoa
+st.markdown("<h1 style='color: blue;'>ỨNG DỤNG PHÂN TÍCH BÁO CÁO TÀI CHÍNH 📊</h1>", unsafe_allow_html=True)
 
 # --- Hàm tính toán chính (Sử dụng Caching để Tối ưu hiệu suất) ---
 @st.cache_data
